@@ -13,7 +13,7 @@ Replace the Sheet ID, Google Sheets/Twilio/Gmail/Vapi credentials, assistant ID,
 Create a tab named exactly Leads and paste the 36 headers from LeadRescue_Sheets_Headers.csv into Row 1. Back up existing sheets and add missing columns rather than deleting any existing data. Ensure the n8n Google account has Editor access.
 
 ## 2. Webhook credentials
-Create a separate n8n HTTP Basic Auth credential for WF1 and configure the Twilio intake Voice webhook to use the same credentials over HTTPS. Twilio supports Basic/Digest-authenticated webhooks; keep credentials secret and add Twilio request-signature validation at a trusted gateway/middleware when available.
+Create a separate n8n HTTP Basic Auth credential for WF1. In Twilio, configure the intake number's Voice webhook to use HTTPS and send the matching Basic Auth credentials. In a simple setup this can be embedded in the webhook URL as https://USERNAME:PASSWORD@YOUR_N8N_DOMAIN/webhook/leadrescue-missed-call (URL-encode special characters); do not commit this real URL to GitHub or logs. Alternatively use Twilio's Webhooks Configuration API / auth profile. Twilio supports HTTP Basic/Digest authentication. These credentials authenticate delivery but do not replace request-signature validation; add Twilio signature validation at a trusted gateway/middleware when available.
 Create an HTTP Header Auth credential for WF2 and configure Vapi's server custom credential to send the same strong Authorization bearer value. Set the saved assistant server URL to https://YOUR_N8N_DOMAIN/webhook/leadrescue-vapi-callback and enable end-of-call-report event delivery.
 
 ## 3. Saved Vapi assistant

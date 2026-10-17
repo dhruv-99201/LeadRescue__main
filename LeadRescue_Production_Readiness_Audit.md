@@ -11,6 +11,12 @@ Branch: fix/production-readiness-audit
 - WF5 notifies admin when an n8n execution throws.
 - Prompts/schema/docs align on Standard not booking appointments. All workflow exports remain inactive.
 
+## Static checks completed on the branch
+- Parsed all five workflow exports and the Vapi structured-output schema as JSON.
+- Checked all workflow connection targets refer to existing node names.
+- Compiled all n8n Code-node JavaScript and both dynamic Vapi JSON request expressions for syntax.
+- Ran synthetic Code-node fixtures for a valid Twilio intake, invalid phone rejection, qualified Vapi call, unqualified Vapi call, gas-smell emergency classification, due scheduled-row filtering, and failed-callback stale monitoring. These are mock-data tests, not provider or live n8n tests.
+
 ## Required staging regression tests
 1. Valid in-hours Twilio inbound -> TwiML Hangup and exactly one PENDING row.
 2. Post same CallSid again -> no second lead/callback.
