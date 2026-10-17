@@ -6,22 +6,38 @@
         "httpMethod": "POST",
         "path": "leadrescue-missed-call",
         "responseMode": "responseNode",
-        "options": {}
+        "options": {},
+        "authentication": "basicAuth"
       },
       "id": "wf1-webhook",
       "name": "Twilio Missed Call Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [240, 300],
-      "webhookId": "leadrescue-missed-call"
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "leadrescue-missed-call",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "REPLACE_TWILIO_WEBHOOK_CRED_ID",
+          "name": "Twilio Intake Webhook Basic Auth"
+        }
+      }
     },
     {
       "parameters": {
         "respondWith": "text",
-        "responseBody": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>",
+        "responseBody": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>",
         "options": {
+          "responseCode": 200,
           "responseHeaders": {
-            "entries": [{"name": "Content-Type", "value": "text/xml"}]
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/xml"
+              }
+            ]
           }
         }
       },
@@ -29,41 +45,23 @@
       "name": "Respond to Twilio (200 OK)",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [460, 180]
+      "position": [
+        460,
+        180
+      ]
     },
     {
       "parameters": {
-        "jsCode": "\n// LeadRescue | WF1 — Missed Call Parser\n// Trigger: Twilio receives forwarded unanswered call\n// Voice stack: Cartesia Sonic-3.6 + Deepgram Nova-3 + gpt-6-luna\n// Audit v7: after-hours SCHEDULED queue, model updates\n\nconst body = $input.first().json?.body ?? $input.first().json ?? {};\n\nconst rawCustomerPhone     = body?.From          ?? body?.from          ?? '';\nconst leadsRescueNumber    = body?.To            ?? body?.to            ?? '';\nconst clientOriginalNumber = body?.ForwardedFrom ?? body?.forwardedFrom ?? leadsRescueNumber;\nconst callSid              = body?.CallSid       ?? body?.callSid       ?? '';\n\nconst cleanPhone = rawCustomerPhone.replace(/\\D/g, '');\n\nif (!cleanPhone || cleanPhone.length < 10) {\n  return [{\n    json: {\n      isValid: false,\n      validationError: 'No valid customer phone number in Twilio payload.',\n      callStatus: 'INVALID',\n      rawCustomerPhone,\n      callSid,\n      timestamp: new Date().toISOString(),\n    }\n  }];\n}\n\nconst customerPhone = rawCustomerPhone.startsWith('+')\n  ? rawCustomerPhone\n  : '+1' + cleanPhone;\n\n// TCPA: No calls before 8am or after 9pm CT\nconst now = new Date();\nconst ctHour = parseInt(\n  new Intl.DateTimeFormat('en-US', {\n    timeZone: 'America/Chicago',\n    hour: 'numeric',\n    hour12: false\n  }).format(now)\n);\nconst isBusinessHours = ctHour >= 8 && ctHour < 21;\n\n// For after-hours leads: calculate next eligible window open\n// Schedule callback for 8:00 AM CT next business day\nconst nextWindowOpen = (() => {\n  const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));\n  ct.setHours(8, 0, 0, 0);\n  // If after 8am today (but after 9pm), next window is tomorrow at 8am\n  if (ct <= now) ct.setDate(ct.getDate() + 1);\n  return ct.toISOString();\n})();\n\nconst leadId = `LR-${Date.now()}`;\n\nreturn [{\n  json: {\n    isValid: true,\n    validationError: null,\n    leadId,\n    customerPhone,\n    clientOriginalNumber,\n    leadsRescueNumber,\n    callSid,\n    isBusinessHours,\n    currentHourCT: ctHour,\n    callStatus: isBusinessHours ? 'PENDING' : 'SCHEDULED',\n    scheduledFor: isBusinessHours ? null : nextWindowOpen,\n    timestamp: now.toISOString(),\n  }\n}];\n"
+        "jsCode": "function centralParts(d){const p=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(d).map(x=>[x.type,x.value]));return {year:+p.year,month:+p.month,day:+p.day,hour:+p.hour,minute:+p.minute,second:+p.second};}\nfunction wallTimeToUtc(y,m,d,h,min=0){const want=Date.UTC(y,m-1,d,h,min,0);let guess=want;for(let i=0;i<5;i++){const p=centralParts(new Date(guess));guess+=want-Date.UTC(p.year,p.month-1,p.day,p.hour,p.minute,p.second);}return new Date(guess);}\nconst root=$input.first().json??{},b=root.body??root,raw=String(b.From??b.from??'').trim(),digits=raw.replace(/\\D/g,'');\nlet phone='';if(raw.startsWith('+')&&digits.length>=10)phone='+'+digits;else if(digits.length===10)phone='+1'+digits;else if(digits.length===11&&digits.startsWith('1'))phone='+'+digits;\nconst callSid=String(b.CallSid??b.callSid??'').trim(),clientNumber=String(b.ForwardedFrom??b.forwardedFrom??b.To??b.to??'').trim();\nconst now=new Date(),p=centralParts(now),inHours=p.hour>=8&&p.hour<21;let scheduledFor='';\nif(!inHours){const d=new Date(Date.UTC(p.year,p.month-1,p.day+(p.hour<8?0:1),12));scheduledFor=wallTimeToUtc(d.getUTCFullYear(),d.getUTCMonth()+1,d.getUTCDate(),8).toISOString();}\nreturn [{json:{isValid:Boolean(phone&&callSid),validationError:!phone?'Invalid phone':!callSid?'Missing CallSid':'',leadId:callSid?'LR-'+callSid:'',customerPhone:phone,clientNumber,callSid,timestamp:now.toISOString(),isBusinessHours:inHours,scheduledFor,callStatus:inHours?'PENDING':'SCHEDULED'}}];"
       },
       "id": "wf1-parser",
       "name": "Parse & Validate Missed Call",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 420]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "conditions": [
-            {
-              "leftValue": "={{ $json.isValid }}",
-              "rightValue": true,
-              "operator": {"type": "boolean", "operation": "equals"}
-            },
-            {
-              "leftValue": "={{ $json.isBusinessHours }}",
-              "rightValue": true,
-              "operator": {"type": "boolean", "operation": "equals"}
-            }
-          ],
-          "combinator": "and"
-        }
-      },
-      "id": "wf1-biz-hours",
-      "name": "Valid + Business Hours?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [680, 420]
+      "position": [
+        460,
+        420
+      ]
     },
     {
       "parameters": {
@@ -74,45 +72,10 @@
       "name": "Wait 2 Minutes",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1,
-      "position": [900, 320]
-    },
-    {
-      "parameters": {
-        "operation": "append",
-        "documentId": {
-          "__rl": true,
-          "value": "REPLACE_SHEETS_DOC_ID",
-          "mode": "id"
-        },
-        "sheetName": {
-          "__rl": true,
-          "value": "Leads",
-          "mode": "name"
-        },
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "Lead ID": "={{ $json.leadId }}",
-            "Timestamp": "={{ $json.timestamp }}",
-            "Customer Phone": "={{ $json.customerPhone }}",
-            "Client Number": "={{ $json.clientOriginalNumber }}",
-            "Call SID": "={{ $json.callSid }}",
-            "Call Status": "PENDING"
-          }
-        },
-        "options": {}
-      },
-      "id": "wf1-sheets-log",
-      "name": "Log PENDING Lead to Sheets",
-      "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 4,
-      "position": [900, 520],
-      "credentials": {
-        "googleSheetsOAuth2Api": {
-          "id": "REPLACE_SHEETS_CRED_ID",
-          "name": "Google Sheets"
-        }
-      }
+      "position": [
+        900,
+        320
+      ]
     },
     {
       "parameters": {
@@ -137,7 +100,369 @@
             "Call SID": "={{ $json.callSid }}",
             "Call Status": "SCHEDULED",
             "Additional Notes": "={{ 'After-hours. Queued for: ' + $json.scheduledFor }}"
-          }
+          },
+          "schema": [
+            {
+              "id": "Lead ID",
+              "displayName": "Lead ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Phone",
+              "displayName": "Customer Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Name",
+              "displayName": "Customer Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Client Number",
+              "displayName": "Client Number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call SID",
+              "displayName": "Call SID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Status",
+              "displayName": "Call Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Resolved Path",
+              "displayName": "Resolved Path",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Ghost",
+              "displayName": "Is Ghost",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Emergency",
+              "displayName": "Is Emergency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Qualified",
+              "displayName": "Is Qualified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Duration (s)",
+              "displayName": "Call Duration (s)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Ended Reason",
+              "displayName": "Ended Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "AI Summary",
+              "displayName": "AI Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Service Type",
+              "displayName": "Service Type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Issue Description",
+              "displayName": "Issue Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Urgency Level",
+              "displayName": "Urgency Level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Service Location",
+              "displayName": "Service Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "City",
+              "displayName": "City",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Area Reference",
+              "displayName": "Area Reference",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Location Confirmed",
+              "displayName": "Location Confirmed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Preferred Time",
+              "displayName": "Preferred Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Appointment Requested",
+              "displayName": "Appointment Requested",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Outcome",
+              "displayName": "Call Outcome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Additional Notes",
+              "displayName": "Additional Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Ghost SMS Sent",
+              "displayName": "Ghost SMS Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Booking SMS Sent",
+              "displayName": "Booking SMS Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Owner Alerted",
+              "displayName": "Owner Alerted",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Gmail Sent",
+              "displayName": "Gmail Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Processed At",
+              "displayName": "Processed At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Scheduled For",
+              "displayName": "Scheduled For",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Vapi Call ID",
+              "displayName": "Vapi Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Vapi Event ID",
+              "displayName": "Vapi Event ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Last Updated At",
+              "displayName": "Last Updated At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Processing Error",
+              "displayName": "Processing Error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Stale Alerted At",
+              "displayName": "Stale Alerted At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            }
+          ]
         },
         "options": {}
       },
@@ -145,7 +470,10 @@
       "name": "Log SCHEDULED Lead to Sheets",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
-      "position": [900, 700],
+      "position": [
+        900,
+        700
+      ],
       "credentials": {
         "googleSheetsOAuth2Api": {
           "id": "REPLACE_SHEETS_CRED_ID",
@@ -161,20 +489,27 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"phoneNumberId\": \"REPLACE_VAPI_PHONE_NUMBER_ID\",\n  \"customer\": {\n    \"number\": \"{{ $json.customerPhone }}\"\n  },\n  \"assistantId\": \"REPLACE_VAPI_ASSISTANT_ID\",\n  \"assistantOverrides\": {\n    \"voice\": {\n      \"provider\": \"cartesia\",\n      \"voiceId\": \"REPLACE_CARTESIA_VOICE_ID\",\n      \"model\": \"sonic-3.6\",\n      \"speed\": 0.95\n    },\n    \"transcriber\": {\n      \"provider\": \"deepgram\",\n      \"model\": \"nova-3\",\n      \"language\": \"en\",\n      \"smartFormat\": true\n    },\n    \"model\": {\n      \"provider\": \"openai\",\n      \"model\": \"gpt-6-luna\"\n    },\n    \"variableValues\": {\n      \"leadId\": \"{{ $json.leadId }}\",\n      \"customerPhone\": \"{{ $json.customerPhone }}\",\n      \"businessName\": \"REPLACE_BUSINESS_NAME\",\n      \"aiName\": \"REPLACE_AI_NAME\"\n    }\n  }\n}",
+        "jsonBody": "={\n\"phoneNumberId\":\"REPLACE_VAPI_PHONE_NUMBER_ID\",\n\"customer\":{\"number\":\"{{ $('Parse & Validate Missed Call').item.json.customerPhone }}\"},\n\"assistantId\":\"REPLACE_VAPI_ASSISTANT_ID\",\n\"assistantOverrides\":{\"variableValues\":{\"leadId\":\"{{ $('Parse & Validate Missed Call').item.json.leadId }}\",\"customerPhone\":\"{{ $('Parse & Validate Missed Call').item.json.customerPhone }}\",\"businessName\":\"REPLACE_BUSINESS_NAME\",\"aiName\":\"REPLACE_AI_NAME\"}}\n}",
         "options": {}
       },
       "id": "wf1-vapi-call",
       "name": "Fire Vapi Outbound Call",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1120, 320],
+      "position": [
+        1120,
+        320
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_VAPI_CRED_ID",
           "name": "Vapi API Key"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -193,7 +528,369 @@
           "mappingMode": "defineBelow",
           "value": {
             "Call Status": "VAPI_FIRED"
-          }
+          },
+          "schema": [
+            {
+              "id": "Lead ID",
+              "displayName": "Lead ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Phone",
+              "displayName": "Customer Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Name",
+              "displayName": "Customer Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Client Number",
+              "displayName": "Client Number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call SID",
+              "displayName": "Call SID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Status",
+              "displayName": "Call Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Resolved Path",
+              "displayName": "Resolved Path",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Ghost",
+              "displayName": "Is Ghost",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Emergency",
+              "displayName": "Is Emergency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Qualified",
+              "displayName": "Is Qualified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Duration (s)",
+              "displayName": "Call Duration (s)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Ended Reason",
+              "displayName": "Ended Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "AI Summary",
+              "displayName": "AI Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Service Type",
+              "displayName": "Service Type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Issue Description",
+              "displayName": "Issue Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Urgency Level",
+              "displayName": "Urgency Level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Service Location",
+              "displayName": "Service Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "City",
+              "displayName": "City",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Area Reference",
+              "displayName": "Area Reference",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Location Confirmed",
+              "displayName": "Location Confirmed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Preferred Time",
+              "displayName": "Preferred Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Appointment Requested",
+              "displayName": "Appointment Requested",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Outcome",
+              "displayName": "Call Outcome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Additional Notes",
+              "displayName": "Additional Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Ghost SMS Sent",
+              "displayName": "Ghost SMS Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Booking SMS Sent",
+              "displayName": "Booking SMS Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Owner Alerted",
+              "displayName": "Owner Alerted",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Gmail Sent",
+              "displayName": "Gmail Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Processed At",
+              "displayName": "Processed At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Scheduled For",
+              "displayName": "Scheduled For",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Vapi Call ID",
+              "displayName": "Vapi Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Vapi Event ID",
+              "displayName": "Vapi Event ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Last Updated At",
+              "displayName": "Last Updated At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Processing Error",
+              "displayName": "Processing Error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Stale Alerted At",
+              "displayName": "Stale Alerted At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            }
+          ]
         },
         "where": {
           "values": [
@@ -209,52 +906,1519 @@
       "name": "Update Sheet — VAPI_FIRED",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
-      "position": [1340, 320],
+      "position": [
+        1340,
+        320
+      ],
       "credentials": {
         "googleSheetsOAuth2Api": {
           "id": "REPLACE_SHEETS_CRED_ID",
           "name": "Google Sheets"
         }
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "wf1-valid",
+      "name": "Valid Twilio Call?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        650,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ Boolean($json['Lead ID']) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "wf1-duplicate",
+      "name": "Lead Already Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1050,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "lookup",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_SHEETS_DOC_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "lookupColumn": "Lead ID",
+        "lookupValue": "={{ $('Parse & Validate Missed Call').item.json.leadId }}",
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "id": "wf1-find-lead",
+      "name": "Find Existing Lead by Call SID",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        850,
+        500
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_SHEETS_CRED_ID",
+          "name": "Google Sheets"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $('Parse & Validate Missed Call').item.json.isBusinessHours }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "wf1-hours",
+      "name": "Within Callback Window?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        470
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_SHEETS_DOC_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Lead ID": "={{ $('Parse & Validate Missed Call').item.json.leadId }}",
+            "Timestamp": "={{ $('Parse & Validate Missed Call').item.json.timestamp }}",
+            "Customer Phone": "={{ $('Parse & Validate Missed Call').item.json.customerPhone }}",
+            "Client Number": "={{ $('Parse & Validate Missed Call').item.json.clientNumber }}",
+            "Call SID": "={{ $('Parse & Validate Missed Call').item.json.callSid }}",
+            "Call Status": "={{ $('Parse & Validate Missed Call').item.json.callStatus }}",
+            "Scheduled For": "={{ $('Parse & Validate Missed Call').item.json.scheduledFor }}",
+            "Last Updated At": "={{ new Date().toISOString() }}",
+            "Processing Error": ""
+          },
+          "matchingColumns": [
+            "Lead ID"
+          ],
+          "schema": [
+            {
+              "id": "Lead ID",
+              "displayName": "Lead ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Phone",
+              "displayName": "Customer Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Name",
+              "displayName": "Customer Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Client Number",
+              "displayName": "Client Number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call SID",
+              "displayName": "Call SID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Status",
+              "displayName": "Call Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Resolved Path",
+              "displayName": "Resolved Path",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Ghost",
+              "displayName": "Is Ghost",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Emergency",
+              "displayName": "Is Emergency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Qualified",
+              "displayName": "Is Qualified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Duration (s)",
+              "displayName": "Call Duration (s)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Ended Reason",
+              "displayName": "Ended Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "AI Summary",
+              "displayName": "AI Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Service Type",
+              "displayName": "Service Type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Issue Description",
+              "displayName": "Issue Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Urgency Level",
+              "displayName": "Urgency Level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Service Location",
+              "displayName": "Service Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "City",
+              "displayName": "City",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Area Reference",
+              "displayName": "Area Reference",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Location Confirmed",
+              "displayName": "Location Confirmed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Preferred Time",
+              "displayName": "Preferred Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Appointment Requested",
+              "displayName": "Appointment Requested",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Outcome",
+              "displayName": "Call Outcome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Additional Notes",
+              "displayName": "Additional Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Ghost SMS Sent",
+              "displayName": "Ghost SMS Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Booking SMS Sent",
+              "displayName": "Booking SMS Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Owner Alerted",
+              "displayName": "Owner Alerted",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Gmail Sent",
+              "displayName": "Gmail Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Processed At",
+              "displayName": "Processed At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Scheduled For",
+              "displayName": "Scheduled For",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Vapi Call ID",
+              "displayName": "Vapi Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Vapi Event ID",
+              "displayName": "Vapi Event ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Last Updated At",
+              "displayName": "Last Updated At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Processing Error",
+              "displayName": "Processing Error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Stale Alerted At",
+              "displayName": "Stale Alerted At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf1-create-row",
+      "name": "Create Canonical Lead Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1510,
+        360
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_SHEETS_CRED_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_SHEETS_DOC_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Lead ID": "={{ $('Parse & Validate Missed Call').item.json.leadId }}",
+            "Timestamp": "={{ $('Parse & Validate Missed Call').item.json.timestamp }}",
+            "Customer Phone": "={{ $('Parse & Validate Missed Call').item.json.customerPhone }}",
+            "Client Number": "={{ $('Parse & Validate Missed Call').item.json.clientNumber }}",
+            "Call SID": "={{ $('Parse & Validate Missed Call').item.json.callSid }}",
+            "Call Status": "={{ $('Parse & Validate Missed Call').item.json.callStatus }}",
+            "Scheduled For": "={{ $('Parse & Validate Missed Call').item.json.scheduledFor }}",
+            "Last Updated At": "={{ new Date().toISOString() }}",
+            "Processing Error": ""
+          },
+          "matchingColumns": [
+            "Lead ID"
+          ],
+          "schema": [
+            {
+              "id": "Lead ID",
+              "displayName": "Lead ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Phone",
+              "displayName": "Customer Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Name",
+              "displayName": "Customer Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Client Number",
+              "displayName": "Client Number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call SID",
+              "displayName": "Call SID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Status",
+              "displayName": "Call Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Resolved Path",
+              "displayName": "Resolved Path",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Ghost",
+              "displayName": "Is Ghost",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Emergency",
+              "displayName": "Is Emergency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Qualified",
+              "displayName": "Is Qualified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Duration (s)",
+              "displayName": "Call Duration (s)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Ended Reason",
+              "displayName": "Ended Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "AI Summary",
+              "displayName": "AI Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Service Type",
+              "displayName": "Service Type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Issue Description",
+              "displayName": "Issue Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Urgency Level",
+              "displayName": "Urgency Level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Service Location",
+              "displayName": "Service Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "City",
+              "displayName": "City",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Area Reference",
+              "displayName": "Area Reference",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Location Confirmed",
+              "displayName": "Location Confirmed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Preferred Time",
+              "displayName": "Preferred Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Appointment Requested",
+              "displayName": "Appointment Requested",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Outcome",
+              "displayName": "Call Outcome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Additional Notes",
+              "displayName": "Additional Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Ghost SMS Sent",
+              "displayName": "Ghost SMS Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Booking SMS Sent",
+              "displayName": "Booking SMS Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Owner Alerted",
+              "displayName": "Owner Alerted",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Gmail Sent",
+              "displayName": "Gmail Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Processed At",
+              "displayName": "Processed At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Scheduled For",
+              "displayName": "Scheduled For",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Vapi Call ID",
+              "displayName": "Vapi Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Vapi Event ID",
+              "displayName": "Vapi Event ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Last Updated At",
+              "displayName": "Last Updated At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Processing Error",
+              "displayName": "Processing Error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Stale Alerted At",
+              "displayName": "Stale Alerted At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf1-scheduled-row",
+      "name": "Create Scheduled Lead Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1510,
+        600
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_SHEETS_CRED_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_SHEETS_DOC_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Lead ID": "={{ $('Parse & Validate Missed Call').item.json.leadId }}",
+            "Call Status": "CALL_FAILED",
+            "Last Updated At": "={{ new Date().toISOString() }}",
+            "Processing Error": "={{ $json.error?.message ?? $json.message ?? 'Vapi call creation failed; inspect n8n execution' }}"
+          },
+          "matchingColumns": [
+            "Lead ID"
+          ],
+          "schema": [
+            {
+              "id": "Lead ID",
+              "displayName": "Lead ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Phone",
+              "displayName": "Customer Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Name",
+              "displayName": "Customer Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Client Number",
+              "displayName": "Client Number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call SID",
+              "displayName": "Call SID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Status",
+              "displayName": "Call Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Resolved Path",
+              "displayName": "Resolved Path",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Ghost",
+              "displayName": "Is Ghost",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Emergency",
+              "displayName": "Is Emergency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Qualified",
+              "displayName": "Is Qualified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Duration (s)",
+              "displayName": "Call Duration (s)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Ended Reason",
+              "displayName": "Ended Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "AI Summary",
+              "displayName": "AI Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Service Type",
+              "displayName": "Service Type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Issue Description",
+              "displayName": "Issue Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Urgency Level",
+              "displayName": "Urgency Level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Service Location",
+              "displayName": "Service Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "City",
+              "displayName": "City",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Area Reference",
+              "displayName": "Area Reference",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Location Confirmed",
+              "displayName": "Location Confirmed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Preferred Time",
+              "displayName": "Preferred Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Appointment Requested",
+              "displayName": "Appointment Requested",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Outcome",
+              "displayName": "Call Outcome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Additional Notes",
+              "displayName": "Additional Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Ghost SMS Sent",
+              "displayName": "Ghost SMS Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Booking SMS Sent",
+              "displayName": "Booking SMS Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Owner Alerted",
+              "displayName": "Owner Alerted",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Gmail Sent",
+              "displayName": "Gmail Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Processed At",
+              "displayName": "Processed At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Scheduled For",
+              "displayName": "Scheduled For",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Vapi Call ID",
+              "displayName": "Vapi Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Vapi Event ID",
+              "displayName": "Vapi Event ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Last Updated At",
+              "displayName": "Last Updated At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Processing Error",
+              "displayName": "Processing Error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Stale Alerted At",
+              "displayName": "Stale Alerted At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            }
+          ]
+        },
+        "where": {
+          "values": [
+            {
+              "column": "Lead ID",
+              "value": "={{ $('Parse & Validate Missed Call').item.json.leadId }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf1-failed",
+      "name": "Mark Vapi Callback Failed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        2600,
+        540
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_SHEETS_CRED_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "from": "REPLACE_TWILIO_FROM_NUMBER",
+        "to": "REPLACE_OWNER_PHONE",
+        "message": "=⚠️ LeadRescue could not start a callback. Lead: {{ $('Parse & Validate Missed Call').item.json.leadId }}. Please call {{ $('Parse & Validate Missed Call').item.json.customerPhone }} manually and check n8n.",
+        "options": {}
+      },
+      "id": "wf1-fail-sms",
+      "name": "Alert Owner — Callback Creation Failed",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        2830,
+        540
+      ],
+      "credentials": {
+        "twilioApi": {
+          "id": "REPLACE_TWILIO_CRED_ID",
+          "name": "Twilio"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     }
   ],
   "connections": {
     "Twilio Missed Call Webhook": {
       "main": [
         [
-          {"node": "Respond to Twilio (200 OK)", "type": "main", "index": 0},
-          {"node": "Parse & Validate Missed Call", "type": "main", "index": 0}
+          {
+            "node": "Respond to Twilio (200 OK)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Parse & Validate Missed Call",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "Parse & Validate Missed Call": {
       "main": [
-        [{"node": "Valid + Business Hours?", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Valid Twilio Call?",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Valid + Business Hours?": {
+    "Valid Twilio Call?": {
       "main": [
         [
-          {"node": "Wait 2 Minutes", "type": "main", "index": 0},
-          {"node": "Log PENDING Lead to Sheets", "type": "main", "index": 0}
+          {
+            "node": "Find Existing Lead by Call SID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Find Existing Lead by Call SID": {
+      "main": [
+        [
+          {
+            "node": "Lead Already Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Already Exists?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Within Callback Window?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Within Callback Window?": {
+      "main": [
+        [
+          {
+            "node": "Create Canonical Lead Row",
+            "type": "main",
+            "index": 0
+          }
         ],
         [
-          {"node": "Log SCHEDULED Lead to Sheets", "type": "main", "index": 0}
+          {
+            "node": "Create Scheduled Lead Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Canonical Lead Row": {
+      "main": [
+        [
+          {
+            "node": "Wait 2 Minutes",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "Wait 2 Minutes": {
       "main": [
-        [{"node": "Fire Vapi Outbound Call", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Fire Vapi Outbound Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Fire Vapi Outbound Call": {
       "main": [
-        [{"node": "Update Sheet — VAPI_FIRED", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Update Sheet — VAPI_FIRED",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Vapi Callback Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Vapi Callback Failed": {
+      "main": [
+        [
+          {
+            "node": "Alert Owner — Callback Creation Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
   "active": false,
-  "settings": {"executionOrder": "v1"},
+  "settings": {
+    "executionOrder": "v1"
+  },
   "versionId": "lr-wf1-v7"
 }
