@@ -85,7 +85,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n\"phoneNumberId\":\"REPLACE_VAPI_PHONE_NUMBER_ID\",\n\"customer\":{\"number\":\"{{ $('Parse & Validate Missed Call').item.json.customerPhone }}\"},\n\"assistantId\":\"REPLACE_VAPI_ASSISTANT_ID\",\n\"assistantOverrides\":{\"variableValues\":{\"leadId\":\"{{ $('Parse & Validate Missed Call').item.json.leadId }}\",\"customerPhone\":\"{{ $('Parse & Validate Missed Call').item.json.customerPhone }}\",\"businessName\":\"REPLACE_BUSINESS_NAME\",\"aiName\":\"REPLACE_AI_NAME\"}}\n}",
+        "jsonBody": "={{ { phoneNumberId: 'REPLACE_VAPI_PHONE_NUMBER_ID', customer: { number: $('Parse & Validate Missed Call').item.json.customerPhone }, assistantId: 'REPLACE_VAPI_ASSISTANT_ID', assistantOverrides: { variableValues: { leadId: $('Parse & Validate Missed Call').item.json.leadId, customerPhone: $('Parse & Validate Missed Call').item.json.customerPhone, businessName: 'REPLACE_BUSINESS_NAME', aiName: 'REPLACE_AI_NAME' } } } }}",
         "options": {}
       },
       "id": "wf1-vapi-call",

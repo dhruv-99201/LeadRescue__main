@@ -479,7 +479,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n\"phoneNumberId\":\"REPLACE_VAPI_PHONE_NUMBER_ID\",\n\"customer\":{\"number\":\"{{ $('Find Due Scheduled Leads').item.json['Customer Phone'] }}\"},\n\"assistantId\":\"REPLACE_VAPI_ASSISTANT_ID\",\n\"assistantOverrides\":{\"variableValues\":{\"leadId\":\"{{ $('Find Due Scheduled Leads').item.json['Lead ID'] }}\",\"customerPhone\":\"{{ $('Find Due Scheduled Leads').item.json['Customer Phone'] }}\",\"businessName\":\"REPLACE_BUSINESS_NAME\",\"aiName\":\"REPLACE_AI_NAME\"}}\n}",
+        "jsonBody": "={{ { phoneNumberId: 'REPLACE_VAPI_PHONE_NUMBER_ID', customer: { number: $('Find Due Scheduled Leads').item.json['Customer Phone'] }, assistantId: 'REPLACE_VAPI_ASSISTANT_ID', assistantOverrides: { variableValues: { leadId: $('Find Due Scheduled Leads').item.json['Lead ID'], customerPhone: $('Find Due Scheduled Leads').item.json['Customer Phone'], businessName: 'REPLACE_BUSINESS_NAME', aiName: 'REPLACE_AI_NAME' } } } }}",
         "options": {
           "timeout": 30000
         }
