@@ -1,0 +1,167 @@
+{
+  "name": "LeadRescue \u2014 WF3: Stale Lead Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "wf3-schedule",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_SHEETS_DOC_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "wf3-sheets-read",
+      "name": "Read All Leads from Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        460,
+        300
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_SHEETS_CRED_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// LeadRescue | WF3 \u2014 Stale Lead Monitor\n// Runs every 30 min. Finds PENDING leads older than 30 min.\n\nconst rows = $input.all().map(item => item.json);\nconst now = Date.now();\nconst STALE_MS = 30 * 60 * 1000;\n\nconst staleLeads = rows.filter(row => {\n  if (!row['Call Status'] || row['Call Status'] !== 'PENDING') return false;\n  const ts = new Date(row['Timestamp']).getTime();\n  if (isNaN(ts)) return false;\n  return (now - ts) > STALE_MS;\n});\n\nif (staleLeads.length === 0) {\n  return [{ json: { hasStaleLeads: false, count: 0, alertMessage: '' } }];\n}\n\nconst leadLines = staleLeads.map(l =>\n  `\u2022 ${l['Customer Name'] ?? 'Unknown'} \u2014 ${l['Customer Phone'] ?? 'No phone'}`\n).join('\\n');\n\nreturn [{\n  json: {\n    hasStaleLeads: true,\n    count: staleLeads.length,\n    alertMessage: `\u26a0\ufe0f LEADRESCUE: ${staleLeads.length} lead(s) stuck as PENDING for 30+ min.\\n\\n${leadLines}\\n\\nVapi callback may have failed. Check n8n dashboard now.`,\n  }\n}];\n"
+      },
+      "id": "wf3-checker",
+      "name": "Check for Stale PENDING Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasStaleLeads }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "wf3-stale-check",
+      "name": "Has Stale Leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "from": "REPLACE_TWILIO_FROM_NUMBER",
+        "to": "REPLACE_OWNER_PHONE",
+        "message": "={{ $json.alertMessage }}\n\nReply STOP to opt out.",
+        "options": {}
+      },
+      "id": "wf3-alert-sms",
+      "name": "SMS \u2014 Stale Lead Alert",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        300
+      ],
+      "credentials": {
+        "twilioApi": {
+          "id": "REPLACE_TWILIO_CRED_ID",
+          "name": "Twilio"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 30 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Read All Leads from Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read All Leads from Sheets": {
+      "main": [
+        [
+          {
+            "node": "Check for Stale PENDING Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for Stale PENDING Leads": {
+      "main": [
+        [
+          {
+            "node": "Has Stale Leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Stale Leads?": {
+      "main": [
+        [
+          {
+            "node": "SMS \u2014 Stale Lead Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "lr-wf3-v6"
+}

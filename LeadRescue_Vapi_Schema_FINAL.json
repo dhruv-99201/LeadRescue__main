@@ -1,0 +1,67 @@
+{
+  "type": "object",
+  "properties": {
+    "callOutcome": {
+      "type": "string",
+      "description": "The overall outcome of the callback call.",
+      "enum": ["booked", "interested", "callback_requested", "not_interested", "wrong_number", "no_answer", "incomplete"]
+    },
+    "isEmergency": {
+      "type": "boolean",
+      "description": "True if the customer mentioned: leak, burst, flooding, no heat, gas smell, fire, overflow, sewage, carbon monoxide, smoke, sparks, no AC, broken pipe, or any immediate safety concern."
+    },
+    "serviceType": {
+      "type": "string",
+      "description": "The HVAC or trade service the customer needs. E.g. AC repair, furnace replacement, plumbing leak, electrical inspection, no heat, no AC, boiler service."
+    },
+    "isInterested": {
+      "type": "boolean",
+      "description": "True if the customer was engaged and interested in getting help. False if they declined, already resolved the issue, or called the wrong number."
+    },
+    "appointmentRequested": {
+      "type": "boolean",
+      "description": "True if the customer agreed to or requested a booking, appointment, or callback from a technician."
+    },
+    "urgencyLevel": {
+      "type": "string",
+      "description": "How urgently the customer needs service. Emergency = immediate safety risk. Urgent = within 24hrs. Standard = within a week. Flexible = no rush.",
+      "enum": ["emergency", "urgent", "standard", "flexible"]
+    },
+    "issueDescription": {
+      "type": "string",
+      "description": "Brief description of the problem in the customer's own words. Capture exactly what they said was wrong."
+    },
+    "preferredTimeWindow": {
+      "type": "string",
+      "description": "Customer preferred appointment window if mentioned. E.g. morning, afternoon, weekday, weekend, ASAP, today, tomorrow."
+    },
+    "additionalNotes": {
+      "type": "string",
+      "description": "Any other relevant information the customer mentioned. E.g. property type, number of units, pets, gate codes, special access instructions."
+    },
+    "customerLocation": {
+      "type": "object",
+      "description": "Customer location captured naturally from conversation. NEVER ask for a ZIP code. Ask for neighborhood or city only to check technician availability.",
+      "properties": {
+        "serviceLocation": {
+          "type": "string",
+          "description": "Capture the location EXACTLY as the customer said it. Do not normalize or formalize it. Examples: 'Frisco', 'Oak Cliff near the park', '123 Main St Richardson', 'Near Toyota Stadium', 'out in Mansfield', 'the Lakewood area'. If the customer gave no location information at all, return 'Unknown'."
+        },
+        "city": {
+          "type": "string",
+          "description": "City or suburb if clearly identifiable from what the customer said. DFW examples: Plano, McKinney, Garland, Fort Worth, Arlington, Irving, Frisco, Allen, Richardson, Denton, Lewisville, Carrollton, Grand Prairie, Mansfield, Flower Mound, Grapevine, Keller, Southlake, Coppell, Cedar Hill, Duncanville, DeSoto, Rowlett, Rockwall, Wylie, Sachse, Prosper, Celina, Little Elm, The Colony."
+        },
+        "areaReference": {
+          "type": "string",
+          "description": "Any neighborhood, landmark, or local reference the customer used. E.g. 'Bishop Arts District', 'near the Galleria', 'by Lake Ray Hubbard', 'close to Toyota Stadium', 'off 635', 'Deep Ellum area', 'Preston Hollow'."
+        },
+        "locationConfirmed": {
+          "type": "boolean",
+          "description": "True if the customer mentioned ANY location — even vague like 'north Dallas' or 'near Plano'. False only if zero location information was shared."
+        }
+      },
+      "required": ["serviceLocation", "locationConfirmed"]
+    }
+  },
+  "required": ["callOutcome", "isEmergency", "serviceType", "isInterested", "appointmentRequested", "customerLocation"]
+}
