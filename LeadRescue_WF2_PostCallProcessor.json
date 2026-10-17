@@ -335,7 +335,6 @@
             "Call Outcome": "={{ $('Parse Vapi Call Data').item.json.structuredData.callOutcome }}",
             "Additional Notes": "={{ $('Parse Vapi Call Data').item.json.structuredData.additionalNotes }}",
             "Processed At": "={{ $('Parse Vapi Call Data').item.json.processedAt }}",
-            "Scheduled For": "={{ $('Parse Vapi Call Data').item.json.startedAt }}",
             "Vapi Call ID": "={{ $('Parse Vapi Call Data').item.json.vapiCallId }}",
             "Vapi Event ID": "={{ $('Parse Vapi Call Data').item.json.eventId }}",
             "Last Updated At": "={{ new Date().toISOString() }}",
@@ -1236,22 +1235,6 @@
     }
   ],
   "connections": {
-    "Vapi Callback Webhook": {
-      "main": [
-        [
-          {
-            "node": "Respond 200 to Vapi",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Parse Vapi Call Data",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Parse Vapi Call Data": {
       "main": [
         [
@@ -1272,7 +1255,13 @@
             "index": 0
           }
         ],
-        []
+        [
+          {
+            "node": "Respond 200 to Vapi",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Check Duplicate Lead ID": {
@@ -1288,7 +1277,13 @@
     },
     "Already Processed?": {
       "main": [
-        [],
+        [
+          {
+            "node": "Respond 200 to Vapi",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Mark Processing Callback",
@@ -1409,7 +1404,13 @@
     },
     "Log Full Call to Sheets": {
       "main": [
-        []
+        [
+          {
+            "node": "Respond 200 to Vapi",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Matching Lead Exists?": {
@@ -1443,7 +1444,24 @@
     },
     "Email Admin — Unmatched Callback": {
       "main": [
-        []
+        [
+          {
+            "node": "Respond 200 to Vapi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vapi Callback Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Vapi Call Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
