@@ -1,5 +1,5 @@
 {
-  "name": "LeadRescue \u2014 WF3: Stale Lead Monitor",
+  "name": "LeadRescue — WF3: Stale Lead Monitor",
   "nodes": [
     {
       "parameters": {
@@ -7,7 +7,7 @@
           "interval": [
             {
               "field": "minutes",
-              "minutesInterval": 30
+              "minutesInterval": 10
             }
           ]
         }
@@ -49,11 +49,12 @@
           "id": "REPLACE_SHEETS_CRED_ID",
           "name": "Google Sheets"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "\n// LeadRescue | WF3 \u2014 Stale Lead Monitor\n// Runs every 30 min. Finds PENDING leads older than 30 min.\n\nconst rows = $input.all().map(item => item.json);\nconst now = Date.now();\nconst STALE_MS = 30 * 60 * 1000;\n\nconst staleLeads = rows.filter(row => {\n  if (!row['Call Status'] || row['Call Status'] !== 'PENDING') return false;\n  const ts = new Date(row['Timestamp']).getTime();\n  if (isNaN(ts)) return false;\n  return (now - ts) > STALE_MS;\n});\n\nif (staleLeads.length === 0) {\n  return [{ json: { hasStaleLeads: false, count: 0, alertMessage: '' } }];\n}\n\nconst leadLines = staleLeads.map(l =>\n  `\u2022 ${l['Customer Name'] ?? 'Unknown'} \u2014 ${l['Customer Phone'] ?? 'No phone'}`\n).join('\\n');\n\nreturn [{\n  json: {\n    hasStaleLeads: true,\n    count: staleLeads.length,\n    alertMessage: `\u26a0\ufe0f LEADRESCUE: ${staleLeads.length} lead(s) stuck as PENDING for 30+ min.\\n\\n${leadLines}\\n\\nVapi callback may have failed. Check n8n dashboard now.`,\n  }\n}];\n"
+        "jsCode": "\nconst now=Date.now(), rows=$input.all().map(i=>i.json), stale=[];\nfor(const r of rows){\n const status=String(r['Call Status']??''), rawTime=r['Last Updated At']||r['Timestamp']||'', t=new Date(rawTime).getTime(), age=Number.isFinite(t)?now-t:Infinity, due=new Date(r['Scheduled For']||'').getTime(), last=new Date(r['Stale Alerted At']||'').getTime(), cooldown=!Number.isFinite(last)||(now-last)>=3600000;\n let reason='';\n if(status==='CALL_FAILED')reason='callback creation failed';\n else if(status==='PENDING'&&age>600000)reason='PENDING >10 minutes';\n else if(status==='CALL_REQUESTED'&&age>600000)reason='CALL_REQUESTED >10 minutes';\n else if(status==='VAPI_FIRED'&&age>1800000)reason='no end-of-call report >30 minutes';\n else if(status==='PROCESSING_CALLBACK'&&age>600000)reason='processing stuck >10 minutes';\n else if(status==='SCHEDULED'&&Number.isFinite(due)&&due<now-600000)reason='scheduled callback overdue >10 minutes';\n if(reason&&cooldown)stale.push({...r,staleReason:reason});\n}\nconst lines=stale.slice(0,5).map(r=>'- '+(r['Lead ID']||'?')+' | '+(r['Customer Phone']||'?')+' | '+r.staleReason).join('\\\\n');\nreturn [{json:{hasStaleLeads:stale.length>0,count:stale.length,staleRows:stale,alertMessage:stale.length?'⚠️ LeadRescue monitor: '+stale.length+' lead(s) need attention.\\\\n'+lines+(stale.length>5?'\\\\nMore rows are in Leads sheet.':'')+'\\\\nInspect n8n executions and reconcile.':''}}];"
       },
       "id": "wf3-checker",
       "name": "Check for Stale PENDING Leads",
@@ -92,12 +93,12 @@
     {
       "parameters": {
         "from": "REPLACE_TWILIO_FROM_NUMBER",
-        "to": "REPLACE_OWNER_PHONE",
+        "to": "REPLACE_ADMIN_PHONE",
         "message": "={{ $json.alertMessage }}\n\nReply STOP to opt out.",
         "options": {}
       },
       "id": "wf3-alert-sms",
-      "name": "SMS \u2014 Stale Lead Alert",
+      "name": "SMS — Stale Lead Alert",
       "type": "n8n-nodes-base.twilio",
       "typeVersion": 1,
       "position": [
@@ -110,6 +111,425 @@
           "name": "Twilio"
         }
       }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rows=$('Check for Stale PENDING Leads').first().json.staleRows??[], now=new Date().toISOString(); return rows.map(r=>({json:{'Lead ID':r['Lead ID'],'Stale Alerted At':now}}));"
+      },
+      "id": "wf3-prepare-stamps",
+      "name": "Prepare Stale Alert Timestamps",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_SHEETS_DOC_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Lead ID": "={{ $json['Lead ID'] }}",
+            "Stale Alerted At": "={{ $json['Stale Alerted At'] }}"
+          },
+          "matchingColumns": [
+            "Lead ID"
+          ],
+          "schema": [
+            {
+              "id": "Lead ID",
+              "displayName": "Lead ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Phone",
+              "displayName": "Customer Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Name",
+              "displayName": "Customer Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Client Number",
+              "displayName": "Client Number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call SID",
+              "displayName": "Call SID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Status",
+              "displayName": "Call Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Resolved Path",
+              "displayName": "Resolved Path",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Ghost",
+              "displayName": "Is Ghost",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Emergency",
+              "displayName": "Is Emergency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Is Qualified",
+              "displayName": "Is Qualified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Duration (s)",
+              "displayName": "Call Duration (s)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Ended Reason",
+              "displayName": "Ended Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "AI Summary",
+              "displayName": "AI Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Service Type",
+              "displayName": "Service Type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Issue Description",
+              "displayName": "Issue Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Urgency Level",
+              "displayName": "Urgency Level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Service Location",
+              "displayName": "Service Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "City",
+              "displayName": "City",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Area Reference",
+              "displayName": "Area Reference",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Location Confirmed",
+              "displayName": "Location Confirmed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Preferred Time",
+              "displayName": "Preferred Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Appointment Requested",
+              "displayName": "Appointment Requested",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Call Outcome",
+              "displayName": "Call Outcome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Additional Notes",
+              "displayName": "Additional Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Ghost SMS Sent",
+              "displayName": "Ghost SMS Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Booking SMS Sent",
+              "displayName": "Booking SMS Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Owner Alerted",
+              "displayName": "Owner Alerted",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Gmail Sent",
+              "displayName": "Gmail Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Processed At",
+              "displayName": "Processed At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Scheduled For",
+              "displayName": "Scheduled For",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Vapi Call ID",
+              "displayName": "Vapi Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Vapi Event ID",
+              "displayName": "Vapi Event ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Last Updated At",
+              "displayName": "Last Updated At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Processing Error",
+              "displayName": "Processing Error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "Stale Alerted At",
+              "displayName": "Stale Alerted At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "wf3-stamp",
+      "name": "Record Stale Alert Cooldown",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1540,
+        300
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_SHEETS_CRED_ID",
+          "name": "Google Sheets"
+        }
+      },
+      "alwaysOutputData": true
     }
   ],
   "connections": {
@@ -150,12 +570,34 @@
       "main": [
         [
           {
-            "node": "SMS \u2014 Stale Lead Alert",
+            "node": "SMS — Stale Lead Alert",
             "type": "main",
             "index": 0
           }
         ],
         []
+      ]
+    },
+    "SMS — Stale Lead Alert": {
+      "main": [
+        [
+          {
+            "node": "Prepare Stale Alert Timestamps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Stale Alert Timestamps": {
+      "main": [
+        [
+          {
+            "node": "Record Stale Alert Cooldown",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
