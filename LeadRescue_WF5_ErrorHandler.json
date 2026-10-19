@@ -1,0 +1,115 @@
+{
+  "name": "LeadRescue — WF5: Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "wf5-trigger",
+      "name": "Workflow Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const e=$input.first().json??{},workflow=e.workflow?.name??e.workflow?.id??'Unknown workflow',lastNode=e.execution?.lastNodeExecuted??'Unknown node',error=String(e.execution?.error?.message??e.error?.message??'No error returned').slice(0,800),url=e.execution?.url??'',at=new Date().toISOString();return [{json:{workflow,lastNode,error,url,at,alert:'LeadRescue workflow failure\\\\nWorkflow: '+workflow+'\\\\nNode: '+lastNode+'\\\\nError: '+error+'\\\\nExecution: '+(url||'Open n8n Executions')+'\\\\nTime: '+at}}];"
+      },
+      "id": "wf5-code",
+      "name": "Format Operational Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "from": "REPLACE_TWILIO_FROM_NUMBER",
+        "to": "REPLACE_ADMIN_PHONE",
+        "message": "={{ $json.alert }}",
+        "options": {}
+      },
+      "id": "wf5-sms",
+      "name": "SMS Admin — Workflow Failed",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        660,
+        220
+      ],
+      "credentials": {
+        "twilioApi": {
+          "id": "REPLACE_TWILIO_CRED_ID",
+          "name": "Twilio"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "sendTo": "REPLACE_ADMIN_EMAIL",
+        "subject": "=LeadRescue error: {{ $json.workflow }}",
+        "message": "=<h2>LeadRescue workflow failure</h2><p><strong>Workflow:</strong> {{ $json.workflow }}<br><strong>Node:</strong> {{ $json.lastNode }}<br><strong>Error:</strong> {{ $json.error }}<br><strong>Execution:</strong> <a href='{{ $json.url }}'>Open execution</a><br><strong>Time:</strong> {{ $json.at }}</p><p>No transcript or credentials are included.</p>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "wf5-email",
+      "name": "Email Admin — Workflow Failed",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        660,
+        420
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_GMAIL_CRED_ID",
+          "name": "Gmail"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Workflow Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Operational Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Operational Alert": {
+      "main": [
+        [
+          {
+            "node": "SMS Admin — Workflow Failed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Admin — Workflow Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
